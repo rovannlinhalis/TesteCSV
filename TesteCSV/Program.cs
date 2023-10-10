@@ -1,4 +1,5 @@
-﻿using Npgsql;
+﻿
+using MySqlConnector;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
@@ -9,15 +10,16 @@ namespace TesteCSV
     internal class Program
     {
         static ConcurrentQueue<byte[]> fila = new ConcurrentQueue<byte[]>();
-        static string sql = "INSERT INTO public.sales (region, country, item_type, sales_channel, order_priority, order_date, order_id, ship_date, units_sold, unit_price, unit_cost, total_revenue, total_cost, total_profit) VALUES ";
-        static int loteSize = 500;
-        static int recordsRead = 0;
-        static int recordsWrite = 0;
-        static int recordsInsert = 0;
+        static ConcurrentBag<int> countItens = new ConcurrentBag<int>();
+        static string sql = "INSERT INTO sales (region, country, item_type, sales_channel, order_priority, order_date, order_id, ship_date, units_sold, unit_price, unit_cost, total_revenue, total_cost, total_profit) VALUES ";
+        static int loteSize = 1000; //Tamanho do lote que vai ser enviado no insert
+        static int recordsRead = 0; 
+        static int nThreads = 8; //Número de threads que vão inserir no banco, utilize uma quantidade menor que o numero de threads da CPU
+        static int limiteFila = (nThreads * (loteSize* 10));  //Limita o tamanho da fila pra não comer toda memória disponível
         static bool readingFile = false;
+        
 
-     
-        static async Task Main(string[] args)
+        static async Task Main(string[] args) 
         {
             DateTime inicio = DateTime.Now;
             string file = "D:\\CSVMillion\\50m.csv";
@@ -32,14 +34,22 @@ namespace TesteCSV
                     {
                         fila.Enqueue(Encoding.Default.GetBytes(line));
                         recordsRead++;
+
+                        while (fila.Count > limiteFila)
+                        {
+                            //fila muito cheia, espera
+                            Thread.Sleep(5000);
+                        }
+
                     }
+                    Console.WriteLine("Encerrou leitura do arquivo " + (DateTime.Now - inicio).TotalSeconds + " seg.");
                     readingFile = false;
                 }
             });
 
-            int DbTasks = 6;
+           
 
-            for (int i = 0; i < DbTasks; i++)
+            for (int i = 0; i < nThreads; i++)
             {
                 allTasks.Add(Task.Factory.StartNew(() =>
                 {
@@ -50,7 +60,7 @@ namespace TesteCSV
                         string line;
                         string insert;
                         int loteCount = 0;
-                        using (NpgsqlConnection conexao = new NpgsqlConnection("Server=127.0.0.1;Port=5432;Database=teste_csv;User Id=postgres;Password=947601.;"))
+                        using (MySqlConnection conexao = new MySqlConnection("Server=127.0.0.1;Port=3306;Database=teste_csv;Uid=root;Pwd=Senha123;Pooling=True;UseCompression=True;"))
                         {
                             conexao.Open();
                             {
@@ -67,12 +77,12 @@ namespace TesteCSV
 
                                     if (loteCount >= loteSize)
                                     {
-                                        recordsWrite += loteCount;
+                                        countItens.Add(loteCount);
                                         loteCount = 0;
                                         insert = sql + sb.ToString();
                                         insert = insert.Remove(insert.Length - 1) + ";";
 
-                                        using (NpgsqlCommand cmd = conexao.CreateCommand())
+                                        using (MySqlCommand cmd = conexao.CreateCommand())
                                         {
                                             cmd.CommandText = insert;
                                             cmd.ExecuteNonQuery();
@@ -82,17 +92,14 @@ namespace TesteCSV
 
                                 }
 
-                                Console.WriteLine("Saiu do loop " + fila.Count + " / " + readingFile);
-
-
                                 if (loteCount > 0)
                                 {
-                                    recordsWrite += loteCount;
+                                    countItens.Add(loteCount);
                                     loteCount = 0;
                                     insert = sql + sb.ToString();
                                     insert = insert.Remove(insert.Length - 1) + ";";
 
-                                    using (NpgsqlCommand cmd = conexao.CreateCommand())
+                                    using (MySqlCommand cmd = conexao.CreateCommand())
                                     {
                                         cmd.CommandText = insert;
                                         cmd.ExecuteNonQuery();
@@ -107,13 +114,15 @@ namespace TesteCSV
                     {
                         Console.WriteLine("ERRO: "+ ex.Message);
                     }
+
+                    Console.WriteLine("Encerrou thread DB");
                 }));
             }
 
             await Task.WhenAll(allTasks);
             Console.WriteLine("FIM");
             Console.WriteLine("Registros lidos: " + recordsRead);
-            Console.WriteLine("Registros escritos: " + recordsWrite);
+            Console.WriteLine("Registros escritos: " + countItens.Sum());
             Console.WriteLine("Duração (segundos): " + (DateTime.Now - inicio).TotalSeconds);
             Console.ReadKey();
 

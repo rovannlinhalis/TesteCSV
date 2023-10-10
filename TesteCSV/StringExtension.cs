@@ -10,7 +10,11 @@ namespace TesteCSV
     {
         public static string SanitizarValue(this string value)
         {
-            return value.Replace("'", "");
+            if ( value.IndexOf("'") >=0)
+            {
+                return value.Replace("'", "");
+            }
+            return value;            
         }
     }
 }
