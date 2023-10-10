@@ -50,7 +50,7 @@ namespace TesteCSV
                         string line;
                         string insert;
                         int loteCount = 0;
-                        using (NpgsqlConnection conexao = new NpgsqlConnection("Server=127.0.0.1;Port=5432;Database=teste_csv;User Id=postgres;Password=947601.;"))
+                        using (NpgsqlConnection conexao = new NpgsqlConnection("Server=127.0.0.1;Port=5432;Database=teste_csv;User Id=postgres;Password=Senha123;"))
                         {
                             conexao.Open();
                             {
