@@ -1,26 +1,28 @@
 ﻿using Npgsql;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
-using TesteCSV;
+using MillionInsertCSV;
 
-namespace TesteCSV
+namespace MillionInsertCSV
 {
     internal class Program
     {
-        static ConcurrentQueue<byte[]> fila = new ConcurrentQueue<byte[]>();
+        static ConcurrentQueue<byte[]> rowsQueue = new ConcurrentQueue<byte[]>();
+        static ConcurrentQueue<byte[]> cmdQueue = new ConcurrentQueue<byte[]>();
         static string sql = "INSERT INTO public.sales (region, country, item_type, sales_channel, order_priority, order_date, order_id, ship_date, units_sold, unit_price, unit_cost, total_revenue, total_cost, total_profit) VALUES ";
-        static int loteSize = 500;
+        static int batchLimit = 1000;
         static int recordsRead = 0;
-        static int recordsWrite = 0;
-        static int recordsInsert = 0;
         static bool readingFile = false;
 
      
         static async Task Main(string[] args)
         {
-            DateTime inicio = DateTime.Now;
-            string file = "D:\\CSVMillion\\50m.csv";
+            Stopwatch stopwatch = new Stopwatch();
+            stopwatch.Start();
+
+            string file = "D:\\CSVMillion\\10m.csv";
 
             List<Task> allTasks = new List<Task>();
             readingFile = true;
@@ -30,14 +32,72 @@ namespace TesteCSV
                 {
                     while ((line = reader.ReadLine()) != null)
                     {
-                        fila.Enqueue(Encoding.Default.GetBytes(line));
+                        if (line.IndexOf("'") > 0)
+                            line = line.Replace("'", "");
+
+                        rowsQueue.Enqueue(Encoding.Default.GetBytes(line));
                         recordsRead++;
                     }
                     readingFile = false;
                 }
             });
 
-            int DbTasks = 6;
+            int queueTask = 4;
+
+            for (int i =0; i < queueTask; i++)
+            {
+                allTasks.Add(Task.Factory.StartNew(() =>
+                {
+                    try
+                    {
+                        StringBuilder sb = new StringBuilder();
+                        string line;
+                        string insert;
+                        int batchSize = 0;
+
+                        while (!rowsQueue.IsEmpty || readingFile)
+                        {
+                            if (rowsQueue.TryDequeue(out byte[] lineData))
+                            {
+                              
+                                line = Encoding.Default.GetString(lineData);
+                                string[] fields = line.Split(',');
+                                sb.Append($"('{fields[0]}', '{fields[1]}', '{fields[2]}', '{fields[3]}', '{fields[4]}', '{fields[5]}', '{fields[6]}', '{fields[7]}', '{fields[8]}', '{fields[9]}', '{fields[10]}', '{fields[11]}', '{fields[12]}', '{fields[13]}'),");
+                                batchSize++;
+                            }
+                            else
+                            {
+                                Task.Delay(100).Wait();
+                            }
+
+                            if (batchSize >= batchLimit)
+                            {
+                                batchSize = 0;
+                                insert = sql + sb.ToString();
+                                insert = insert.Remove(insert.Length - 1) + ";";
+                                cmdQueue.Enqueue(Encoding.Default.GetBytes(insert));
+                                sb.Clear();
+                            }
+
+                        }
+
+                        if (batchSize > 0)
+                        {
+                            batchSize = 0;
+                            insert = sql + sb.ToString();
+                            insert = insert.Remove(insert.Length - 1) + ";";
+                            cmdQueue.Enqueue(Encoding.Default.GetBytes(insert));
+                            sb.Clear();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("ERRO: " + ex.Message);
+                    }
+                }));
+            }
+
+            int DbTasks = 16;
 
             for (int i = 0; i < DbTasks; i++)
             {
@@ -45,63 +105,30 @@ namespace TesteCSV
                 {
                     try
                     {
-
-                        StringBuilder sb = new StringBuilder();
                         string line;
-                        string insert;
-                        int loteCount = 0;
-                        using (NpgsqlConnection conexao = new NpgsqlConnection("Server=127.0.0.1;Port=5432;Database=teste_csv;User Id=postgres;Password=Senha123;"))
+                        //using (NpgsqlConnection conexao = new NpgsqlConnection("Server=127.0.0.1;Port=5432;Database=teste_csv;User Id=teste_csv;Password=Senha123;"))
+                        using (NpgsqlConnection conexao = new NpgsqlConnection("Server=192.168.15.221;Port=5432;Database=teste_csv;User Id=usuario;Password=Senha123;"))
                         {
                             conexao.Open();
                             {
-                                while (!fila.IsEmpty || readingFile)
+                                while (!rowsQueue.IsEmpty || !cmdQueue.IsEmpty || readingFile)
                                 {
-                                    if (fila.TryDequeue(out byte[] lineData))
+                                    if (cmdQueue.TryDequeue(out byte[] lineData))
                                     {
                                         line = Encoding.Default.GetString(lineData);
-                                        string[] fields = line.Split(',');
-                                        sb.Append("('" + fields[0].SanitizarValue() + "', '" + fields[1].SanitizarValue() + "', '" + fields[2].SanitizarValue() + "', '" + fields[3].SanitizarValue() + "', '" + fields[4].SanitizarValue() + "', '" + fields[5].SanitizarValue() + "', '" + fields[6].SanitizarValue() + "', '" + fields[7].SanitizarValue() + "', '" + fields[8].SanitizarValue() + "', '" + fields[9].SanitizarValue() + "', '" + fields[10].SanitizarValue() + "', '" + fields[11].SanitizarValue() + "', '" + fields[12].SanitizarValue() + "', '" + fields[13].SanitizarValue() + "'),");
-                                        loteCount++;
-                                    }
-
-
-                                    if (loteCount >= loteSize)
-                                    {
-                                        recordsWrite += loteCount;
-                                        loteCount = 0;
-                                        insert = sql + sb.ToString();
-                                        insert = insert.Remove(insert.Length - 1) + ";";
-
                                         using (NpgsqlCommand cmd = conexao.CreateCommand())
                                         {
-                                            cmd.CommandText = insert;
+                                            cmd.CommandText = line;
                                             cmd.ExecuteNonQuery();
                                         }
-                                        sb.Clear();
                                     }
-
-                                }
-
-                                Console.WriteLine("Saiu do loop " + fila.Count + " / " + readingFile);
-
-
-                                if (loteCount > 0)
-                                {
-                                    recordsWrite += loteCount;
-                                    loteCount = 0;
-                                    insert = sql + sb.ToString();
-                                    insert = insert.Remove(insert.Length - 1) + ";";
-
-                                    using (NpgsqlCommand cmd = conexao.CreateCommand())
+                                    else
                                     {
-                                        cmd.CommandText = insert;
-                                        cmd.ExecuteNonQuery();
+                                        Task.Delay(300).Wait();
                                     }
-                                    sb.Clear();
                                 }
                             }
                         }
-
                     }
                     catch (Exception ex)
                     {
@@ -112,9 +139,8 @@ namespace TesteCSV
 
             await Task.WhenAll(allTasks);
             Console.WriteLine("FIM");
-            Console.WriteLine("Registros lidos: " + recordsRead);
-            Console.WriteLine("Registros escritos: " + recordsWrite);
-            Console.WriteLine("Duração (segundos): " + (DateTime.Now - inicio).TotalSeconds);
+            Console.WriteLine("Registros: " + recordsRead.ToString("000.000.000"));
+            Console.WriteLine("Duração (segundos): " + stopwatch.Elapsed.TotalSeconds);
             Console.ReadKey();
 
 
