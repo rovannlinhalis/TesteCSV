@@ -67,7 +67,7 @@ namespace MillionInsertCSV
                             }
                             else
                             {
-                                Task.Delay(100).Wait();
+                                Task.Delay(200).Wait();
                             }
 
                             if (batchSize >= batchLimit)
