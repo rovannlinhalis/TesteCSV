@@ -106,7 +106,6 @@ namespace MillionInsertCSV
                     try
                     {
                         string line;
-                        //using (NpgsqlConnection conexao = new NpgsqlConnection("Server=127.0.0.1;Port=5432;Database=teste_csv;User Id=teste_csv;Password=Senha123;"))
                         using (NpgsqlConnection conexao = new NpgsqlConnection("Server=192.168.15.221;Port=5432;Database=teste_csv;User Id=usuario;Password=Senha123;"))
                         {
                             conexao.Open();
@@ -139,7 +138,7 @@ namespace MillionInsertCSV
 
             await Task.WhenAll(allTasks);
             Console.WriteLine("FIM");
-            Console.WriteLine("Registros: " + recordsRead.ToString("000.000.000"));
+            Console.WriteLine("Registros: " + recordsRead.ToString("000,000,000"));
             Console.WriteLine("Duração (segundos): " + stopwatch.Elapsed.TotalSeconds);
             Console.ReadKey();
 
